@@ -5,6 +5,7 @@
 //  Created by Alex on 09-08-15.
 //  Copyright (c) 2015 Balancing Rock. All rights reserved.
 //
+//  IMPORTANT: Don't forget to set the variable 'writeWithResponse' or else DZBluetoothSerialHandler might not work.
 //
 
 import UIKit
@@ -28,10 +29,10 @@ var serial: DZBluetoothSerialHandler!
     optional func serialHandlerDidConnect(peripheral: CBPeripheral)
     
     /// Called when a peripheral disconnected
-    optional func serialHandlerDidDisconnect(peripheral: CBPeripheral, error: NSError)
+    optional func serialHandlerDidDisconnect(peripheral: CBPeripheral, error: NSError?)
     
     /// Called when a pending connection failed
-    optional func serialHandlerDidFailToConnect(peripheral: CBPeripheral, error: NSError)
+    optional func serialHandlerDidFailToConnect(peripheral: CBPeripheral, error: NSError?)
     
     /// Called when a peripheral is ready for communication
     optional func serialHandlerIsReady(peripheral: CBPeripheral)
@@ -40,7 +41,7 @@ var serial: DZBluetoothSerialHandler!
 
 final class DZBluetoothSerialHandler: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     
-//MARK: Variables
+    //MARK: Variables
     
     /// The delegate object the DZBluetoothDelegate methods will be called upon
     var delegate: DZBluetoothSerialDelegate!
@@ -57,8 +58,13 @@ final class DZBluetoothSerialHandler: NSObject, CBCentralManagerDelegate, CBPeri
     /// The state of the bluetooth manager (use this to determine whether it is on or off or disabled etc)
     var state: CBCentralManagerState { get { return centralManager.state } }
     
+    /// Whether to write to the HM10 with or without response.
+    /// Legit HM10 modules (from JNHuaMao) require 'Write without Response',
+    /// while fake modules (e.g. from Bolutek) require 'Write with Response'.
+    var writeWithResponse = false
     
-//MARK: functions
+    
+    //MARK: functions
     
     /// Always use this to initialize an instance
     init(delegate: DZBluetoothSerialDelegate) {
@@ -99,14 +105,16 @@ final class DZBluetoothSerialHandler: NSObject, CBCentralManagerDelegate, CBPeri
     
     
     /// Send a string to the device
-    func sendMessageToDevice(var message: String) {
+    func sendMessageToDevice(message: String) {
         
         if centralManager.state != .PoweredOn || connectedPeripheral == nil { return }
         
+        let writeType: CBCharacteristicWriteType = writeWithResponse ? .WithResponse : .WithoutResponse
+        
         // write the value to all characteristics of all services
-        for service in connectedPeripheral!.services as! [CBService] {
-            for characteristic in service.characteristics as! [CBCharacteristic] {
-                connectedPeripheral!.writeValue(message.dataUsingEncoding(NSUTF8StringEncoding), forCharacteristic: characteristic, type: .WithResponse)
+        for service in connectedPeripheral!.services! {
+            for characteristic in service.characteristics! {
+                connectedPeripheral!.writeValue(message.dataUsingEncoding(NSUTF8StringEncoding)!, forCharacteristic: characteristic, type: writeType)
             }
         }
         
@@ -127,16 +135,16 @@ final class DZBluetoothSerialHandler: NSObject, CBCentralManagerDelegate, CBPeri
     }
     
     
-//MARK: CBCentralManagerDelegate functions
-
-    func centralManager(central: CBCentralManager!, didDiscoverPeripheral peripheral: CBPeripheral!, advertisementData: [NSObject : AnyObject]!, RSSI: NSNumber!) {
+    //MARK: CBCentralManagerDelegate functions
+    
+    func centralManager(central: CBCentralManager, didDiscoverPeripheral peripheral: CBPeripheral, advertisementData: [String : AnyObject], RSSI: NSNumber) {
         if delegate.respondsToSelector(Selector("serialHandlerDidDiscoverPeripheral:RSSI:")) {
             // just send it to the delegate
             delegate.serialHandlerDidDiscoverPeripheral!(peripheral, RSSI: RSSI)
         }
     }
     
-    func centralManager(central: CBCentralManager!, didConnectPeripheral peripheral: CBPeripheral!) {
+    func centralManager(central: CBCentralManager, didConnectPeripheral peripheral: CBPeripheral) {
         if delegate.respondsToSelector(Selector("serialHandlerDidConnect:")) {
             // send it to the delegate
             delegate.serialHandlerDidConnect!(peripheral)
@@ -144,17 +152,17 @@ final class DZBluetoothSerialHandler: NSObject, CBCentralManagerDelegate, CBPeri
         
         peripheral.delegate = self
         
-        // Okay, the peripheral is connected but we're not ready yet! 
+        // Okay, the peripheral is connected but we're not ready yet!
         // First get all services
         // Then get all characteristics of all services
         // Once that has been done check whether our characteristic (0xFFE1) is available
         // If it is, subscribe to it, and then we're ready for communication
         // If it is not, we've failed and have to find another device..
-
+        
         peripheral.discoverServices(nil)
     }
-
-    func centralManager(central: CBCentralManager!, didDisconnectPeripheral peripheral: CBPeripheral!, error: NSError!) {
+    
+    func centralManager(central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: NSError?) {
         connectedPeripheral = nil
         if delegate.respondsToSelector(Selector("serialHandlerDidDisconnect:error:")) {
             // send it to the delegate
@@ -162,14 +170,14 @@ final class DZBluetoothSerialHandler: NSObject, CBCentralManagerDelegate, CBPeri
         }
     }
     
-    func centralManager(central: CBCentralManager!, didFailToConnectPeripheral peripheral: CBPeripheral!, error: NSError!) {
+    func centralManager(central: CBCentralManager, didFailToConnectPeripheral peripheral: CBPeripheral, error: NSError?) {
         if delegate.respondsToSelector(Selector("serialHandlerDidFailToConnect:error:")) {
             // just send it to the delegate
             delegate.serialHandlerDidFailToConnect!(peripheral, error: error)
         }
     }
     
-    func centralManagerDidUpdateState(central: CBCentralManager!) {
+    func centralManagerDidUpdateState(central: CBCentralManager) {
         if delegate.respondsToSelector(Selector("serialHandlerDidChangeState:")) {
             // just send it to the delegate
             delegate.serialHandlerDidChangeState!(central.state)
@@ -177,18 +185,18 @@ final class DZBluetoothSerialHandler: NSObject, CBCentralManagerDelegate, CBPeri
     }
     
     
-//MARK: CBPeripheralDelegate functions
+    //MARK: CBPeripheralDelegate functions
     
-    func peripheral(peripheral: CBPeripheral!, didDiscoverServices error: NSError!) {
+    func peripheral(peripheral: CBPeripheral, didDiscoverServices error: NSError?) {
         // discover all characteristics for all services
-        for service in peripheral.services as! [CBService] {
+        for service in peripheral.services! {
             peripheral.discoverCharacteristics(nil, forService: service)
         }
     }
     
-    func peripheral(peripheral: CBPeripheral!, didDiscoverCharacteristicsForService service: CBService!, error: NSError!) {
+    func peripheral(peripheral: CBPeripheral, didDiscoverCharacteristicsForService service: CBService, error: NSError?) {
         // check whether the characteristic we're looking for (0xFFE1) is present
-        for characteristic in service.characteristics as! [CBCharacteristic] {
+        for characteristic in service.characteristics! {
             if characteristic.UUID == CBUUID(string: "FFE1") {
                 connectedPeripheral = peripheral
                 // subscribe to this value (so we'll get notified when there is serial data for us..)
@@ -204,10 +212,10 @@ final class DZBluetoothSerialHandler: NSObject, CBCentralManagerDelegate, CBPeri
         
     }
     
-    func peripheral(peripheral: CBPeripheral!, didUpdateValueForCharacteristic characteristic: CBCharacteristic!, error: NSError!) {
+    func peripheral(peripheral: CBPeripheral, didUpdateValueForCharacteristic characteristic: CBCharacteristic, error: NSError?) {
         
         // there is new data for us! Update the buffer!
-        let newStr = NSString(data: characteristic.value, encoding: NSUTF8StringEncoding) as! String
+        let newStr = NSString(data: characteristic.value!, encoding: NSUTF8StringEncoding) as! String
         buffer += newStr
         
         // notify the delegate of the new string
@@ -216,5 +224,4 @@ final class DZBluetoothSerialHandler: NSObject, CBCentralManagerDelegate, CBPeri
         }
     }
     
-   
 }
